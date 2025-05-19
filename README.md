@@ -338,8 +338,10 @@ Differometor provides a Setup class to define the interferometer setup. You can 
 * **beamsplitter**
     * A beamsplitter is handled equivalent to a mirror, but has an additional alpha parameter describing the angle of incidence of the incoming light and two more ports.
     * ```setup.add("beamsplitter", "bs", alpha=50)``` adds a beamsplitter component with name bs which reflects half of the incoming light and transmits the other half at an angle of 50 degrees. All other properties are set to default.
-    * A beamsplitter has four ports: left, right, top and bottom. Each port has two directions: in and out. Incoming light on the left port is transmitted to the right port and reflected to the top port. Incoming light at the top is transmitted to the bottom port and reflected to the left port. Incoming light at the right port is transmitted to the left port and reflected to the bottom port. Incoming light at the bottom port is transmitted to the top port and reflected to the right port.
+    * A beamsplitter has four ports: left, right, top and bottom. Each port has two directions: in and out. Incoming light on the left port is transmitted to the right port and reflected to the top port. Incoming light at the top is transmitted to the bottom port and reflected to the left port. Incoming light at the right port is transmitted to the left port and reflected to the bottom port. Incoming light at the bottom port is transmitted to the top port and reflected to the right port. 
+    
     <img src="media/beamsplitter.png" alt="beamsplitter" width="200"/>
+    
     * The default properties of a beamsplitter are:
         * reflectivity: 0.5
         * loss: 5e-6
