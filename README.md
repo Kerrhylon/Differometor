@@ -421,7 +421,7 @@ To cite this repository, please use the following BibTeX entry:
   author = {Jonathan Klimesch and Yehonathan Drori and Rana X Adhikari and Mario Krenn},
   title = {Differometor: A Differentiable Interferometer Simulator for the Computational Design of Gravitational Wave Detectors},
   url = {http://github.com/artificial-scientist-lab/Differometor},
-  version = {0.0.1},
+  version = {0.0.2},
   year = {2025},
 }
 ```
