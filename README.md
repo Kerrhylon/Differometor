@@ -93,6 +93,8 @@ A good way to familiarize yourself with Differometor is to take a look at the [e
    * [Sensitivity of Advanced LIGO Setup](examples/aligo.py): Computes the strain sensitivity of a simplified aLIGO setup. Compare with the corresponding [Finesse example](https://finesse.ifosim.org/docs/latest/examples/09_aligo_sensitivity.html).
    * [Sensitivity of Voyager Setup](examples/voyager.py): Computes the strain sensitivity of the Voyager setup using balanced homodyne detection.
    * [Sensitivity Optimization of Voyager Setup](examples/voyager_optimization.py): Optimizes the sensitivity of the Voyager setup. 
+   * [Sensitivity of a pretrained UIFO Setup](examples/uifo.py): Computes the strain sensitivity of a pretrained UIFO and compares it to Voyager.
+   * [Sensitivity Optimization of UIFO Setup](examples/uifo_optimization.py): Optimizes the sensitivity of an UIFO.
 
 ### Optical Cavity Simulation 
 

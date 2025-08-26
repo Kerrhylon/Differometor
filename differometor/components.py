@@ -1,5 +1,5 @@
-import numpy as np
 import jax.numpy as jnp
+import numpy as np
 
 
 EPSILON_0C = 1
@@ -13,6 +13,9 @@ F = 0
 H_PLANCK = 6.62607015e-34
 X_SCALE = 1e-09
 DEFAULT_REFRACTIVE_INDEX = 1.0
+SOFT_SIDE_POWER_THRESHOLD = 2e3
+HARD_SIDE_POWER_THRESHOLD = 3.5e6
+DETECTOR_POWER_THRESHOLD = 1e-2
 
 
 def standardize_output(output: list):
@@ -36,7 +39,7 @@ DEFAULT_PROPERTIES = {
     'space': {'length': 0, 'refractive_index': 1.},
     'detector': {},
     'qnoised': {},
-    'qhd': {'phase': 0},
+    'qhd': {'phase': 180},
     'nothing': {},
     'directional_beamsplitter': {},
 }
@@ -119,7 +122,7 @@ def squeezer(parameters: jnp.ndarray):
 ### SIGNALS ###
 
 
-def signal(parameters: jnp.ndarray):
+def signal_function(parameters: jnp.ndarray):
     """
     parameters[0] = amplitude
     parameters[1] = phase
@@ -325,12 +328,41 @@ def demodulate_signal_power(carrier: jnp.ndarray, signal: jnp.ndarray):
     lower_sideband = carrier * signal[carrier.shape[0]:carrier.shape[0]*2]
     return upper_sideband + lower_sideband    
 
-def phase_detector(solution: jnp.ndarray):
-    z = jnp.where(jnp.abs(solution.imag) < 1e-10, solution.real, solution)
-    return jnp.angle(z, deg=True)
-    
 
 ### MIRROR AND BEAMSPLITTER ###
+
+
+"""
+Parameters
+----------
+loss: float
+    The loss of the mirror. Must be between 0 and 1.
+reflectivity: float
+    What fraction of 1 - loss is reflected. Must be between 0 and 1. This also 
+    determines the transmissivity by (1 - loss) * (1 - reflectivity). 
+    
+    One problem for optimization are the constraints that come with reflectivity, 
+    transmissivity and loss.
+
+    1. Changing reflectivity, constant transmissivity:
+        reflectivity can change in range 0-(1-transmissivity)
+    2. Constant reflectivity, changing transmissivity:
+        transmissivity can change in range 0-(1-reflectivity)
+    3. Changing reflectivity, changing transmissivity:
+        reflectivity can change in range 0-1
+        transmissivity can change in range 0-(1-reflectivity)
+
+    This is hard to implement in an optimization because two changing parameters 
+    are dependent on each other.
+
+    This could also be solved by optimizing two parameters in range 0-1. The first 
+    parameter specifies the fraction that is taken up by the loss
+    and the second parameter specifies that fraction of the previous fraction that
+    is taken up by reflectivity. E.g. 0.5 and 0.2 means that loss is 0.5, and 
+    reflectivity takes 20% of the other 50%, so 0.1 which means that transmissivity
+    is at 0.4. Here the only constraint is that both parameters must be between 0 
+    and 1.
+"""
 
 
 def surface(parameters: jnp.ndarray):
@@ -488,14 +520,13 @@ def dummy_function(parameters: jnp.ndarray):
     return standardize_output([1.])
 
 
-# the order of the functions here is important for the build function and should not be changed
-FUNCTION_LIST = [
+FUNCTIONS = [
     force_calculation_right,
     laser, 
     surface, 
     space, 
     space_modulation, 
-    signal, 
+    signal_function, 
     dummy_function,
     vacuum_quantum_noise,
     loss_quantum_noise,

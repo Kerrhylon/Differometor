@@ -1,8 +1,34 @@
 import numpy as np
 import jax.numpy as jnp
-from collections import defaultdict
 from differometor.setups import Setup
-from differometor.components import nothing_matrix, directional_beamsplitter_matrix, mirror_matrix, beamsplitter_matrix, laser_np, space, F, DEFAULT_REFRACTIVE_INDEX, DEFAULT_PROPERTIES
+from collections import defaultdict
+from differometor.components import (
+    F, DEFAULT_REFRACTIVE_INDEX, DEFAULT_PROPERTIES, FUNCTIONS, 
+    signal_function, 
+    laser_np, 
+    laser, 
+    vacuum_quantum_noise, 
+    squeezer,
+    nothing_matrix,
+    directional_beamsplitter_matrix,
+    beamsplitter_matrix,
+    mirror_matrix,
+    space_modulation,
+    space_lower,
+    space_modulation_lower,
+    space,
+    laser_amplitude_modulation,
+    laser_frequency_modulation,
+    laser_frequency_modulation_lower,
+    susceptibility,
+    force_calculation_left,
+    force_calculation_right,
+    surface,
+    loss_quantum_noise,
+    corrected_optomechanical_phase_left,
+    corrected_optomechanical_phase_right,
+    dummy_function
+)
 
 
 LINKING_FUNCTIONS = []
@@ -442,7 +468,7 @@ def build(setup: Setup):
                              system_matrix_row_indices=np.array([system_size * 2 + signal_index]),
                              # signal right-hand-side is the last column of the signal matrix
                              system_matrix_column_indices=np.array([-1]),
-                             function_indices=[FUNCTION_INDICES["signal"]])
+                             function_indices=[FUNCTIONS.index(signal_function)])
         
         ### LASERS AND DETECTORS ###
         if data["component"] in ["laser", "detector", "qnoised", "squeezer"]:
@@ -519,7 +545,7 @@ def build(setup: Setup):
                                  system_matrix_row_indices=np.array([component_index]),
                                  # carrier right-hand-side is the last column of the carrier matrix
                                  system_matrix_column_indices=np.array([-1]),
-                                 function_indices=[FUNCTION_INDICES["laser"]])
+                                 function_indices=[FUNCTIONS.index(laser)])
                 # lasers are a source of quantum noise, so they get an entry in the noise matrix at their position
                 set_instructions(noise_instructions,
                                  node,
@@ -528,7 +554,7 @@ def build(setup: Setup):
                                  output_column_indices=np.array([0]),
                                  system_matrix_row_indices=np.array([component_index]),
                                  system_matrix_column_indices=np.array([component_index]),
-                                 function_indices=[FUNCTION_INDICES["vacuum_quantum_noise"]],
+                                 function_indices=[FUNCTIONS.index(vacuum_quantum_noise)],
                                  system_size_for_sidebands=system_size)
             if data["component"] == "squeezer":
                 # Mark target port as used
@@ -547,7 +573,7 @@ def build(setup: Setup):
                                  output_column_indices=np.array([0, 1, 2, 3]),
                                  system_matrix_row_indices=np.array([component_index, component_index, component_index + system_size, component_index + system_size]),
                                  system_matrix_column_indices=np.array([component_index, component_index + system_size, component_index + system_size, component_index]),
-                                 function_indices=[FUNCTION_INDICES["squeezer"]])
+                                 function_indices=[FUNCTIONS.index(squeezer)],)
         if data["component"] == "qhd":
             parameter_linking([data["properties"]["phase"]],
                                 indices_to_link,
@@ -657,7 +683,7 @@ def build(setup: Setup):
                              output_column_indices=output_column_indices,
                              system_matrix_row_indices=system_matrix_row_indices,
                              system_matrix_column_indices=system_matrix_column_indices,
-                             function_indices=[FUNCTION_INDICES['surface']])
+                             function_indices=[FUNCTIONS.index(surface)])
             # Surface submatrix also has to change in signal run if e.g. tuning changes 
             set_instructions(signal_instructions,
                              node,
@@ -665,7 +691,7 @@ def build(setup: Setup):
                              output_column_indices=output_column_indices,
                              system_matrix_row_indices=system_matrix_row_indices,
                              system_matrix_column_indices=system_matrix_column_indices,
-                             function_indices=[FUNCTION_INDICES['surface']],
+                             function_indices=[FUNCTIONS.index(surface)],
                              system_size_for_sidebands=system_size)
             # losses are a source of quantum noise, so they get an entry in the noise matrix at their position
             set_instructions(noise_instructions,
@@ -675,7 +701,7 @@ def build(setup: Setup):
                              output_column_indices = noise_output_column_indices,
                              system_matrix_row_indices = noise_system_matrix_indices,
                              system_matrix_column_indices = noise_system_matrix_indices,
-                             function_indices=[FUNCTION_INDICES["loss_quantum_noise"]],
+                             function_indices=[FUNCTIONS.index(loss_quantum_noise)],
                              system_size_for_sidebands=system_size)
 
     # Apply potential laser field modulations. This can only be done here, because both positions of laser
@@ -691,9 +717,9 @@ def build(setup: Setup):
             signal_matrix_indices += [system_size * 2 + signal_index] * 2
             target_property = setup.nodes[signal]["target_property"]
             if target_property == "amplitude":
-                function_indices.extend([FUNCTION_INDICES["laser_amplitude_modulation"], FUNCTION_INDICES["laser_amplitude_modulation"]])
+                function_indices.extend([FUNCTIONS.index(laser_amplitude_modulation), FUNCTIONS.index(laser_amplitude_modulation)])
             elif target_property == "frequency":
-                function_indices.extend([FUNCTION_INDICES["laser_frequency_modulation"], FUNCTION_INDICES["laser_frequency_modulation_lower"]])
+                function_indices.extend([FUNCTIONS.index(laser_frequency_modulation), FUNCTIONS.index(laser_frequency_modulation_lower)])
             else:
                 raise ValueError("Target property for laser modulation has to be either amplitude or frequency.")
         laser_signal_number = len(laser_to_signals[node])
@@ -760,11 +786,11 @@ def build(setup: Setup):
                              output_column_indices=np.array([0] * 7),
                              system_matrix_row_indices=system_matrix_row_indices,
                              system_matrix_column_indices=system_matrix_column_indices,
-                             function_indices=[FUNCTION_INDICES["f_to_z"],
-                                               FUNCTION_INDICES["optical_to_mechanical_left"],
-                                               FUNCTION_INDICES["optical_to_mechanical_right"],
-                                               FUNCTION_INDICES["mechanical_to_optical_left"],
-                                               FUNCTION_INDICES["mechanical_to_optical_right"]],
+                             function_indices=[FUNCTIONS.index(susceptibility),
+                                               FUNCTIONS.index(force_calculation_left),
+                                               FUNCTIONS.index(force_calculation_right),
+                                               FUNCTIONS.index(corrected_optomechanical_phase_left),
+                                               FUNCTIONS.index(corrected_optomechanical_phase_right)],
                             # 4 mirror fields, 2 mirror inputs
                             carrier_indices=np.array([component_index, component_index + 1, component_index + 2, component_index + 3, component_index, component_index + 2]),
                             carrier_row_indices=system_matrix_row_indices[1:],
@@ -804,11 +830,11 @@ def build(setup: Setup):
                              output_column_indices=np.array([0] * 13),
                              system_matrix_row_indices=system_matrix_row_indices, 
                              system_matrix_column_indices=system_matrix_column_indices,
-                             function_indices=[FUNCTION_INDICES["f_to_z"], 
-                                               FUNCTION_INDICES["optical_to_mechanical_left"], 
-                                               FUNCTION_INDICES["optical_to_mechanical_right"], 
-                                               FUNCTION_INDICES["mechanical_to_optical_left"],
-                                               FUNCTION_INDICES["mechanical_to_optical_right"]],
+                             function_indices=[FUNCTIONS.index(susceptibility),
+                                               FUNCTIONS.index(force_calculation_left),
+                                               FUNCTIONS.index(force_calculation_right),
+                                               FUNCTIONS.index(corrected_optomechanical_phase_left),
+                                               FUNCTIONS.index(corrected_optomechanical_phase_right)],
                             # 8 beamsplitter fields, 4 beamsplitter inputs (top input for left output, left input for top output, bottom input for right output, right input for bottom output)
                             carrier_indices=np.array([component_index, component_index + 1, component_index + 2, component_index + 3, component_index + 4, component_index + 5, component_index + 6, component_index + 7, component_index + 2, component_index, component_index + 6, component_index + 4]),
                             carrier_row_indices=system_matrix_row_indices[1:],
@@ -860,7 +886,7 @@ def build(setup: Setup):
                          output_column_indices=np.array([0, 0]),
                          system_matrix_row_indices=np.array([source_input_index, target_input_index]),
                          system_matrix_column_indices=np.array([target_output_index, source_output_index]),
-                         function_indices=[FUNCTION_INDICES['space']])
+                         function_indices=[FUNCTIONS.index(space)])
 
         # all spaces need to be updated in the signal run because the frequency changes for the sidebands.
         # Lower sideband is handled manually here because so far the negative frequency is only important
@@ -875,7 +901,7 @@ def build(setup: Setup):
                         # 2 upper sideband entries, 2 lower sideband entries
                         system_matrix_row_indices=np.array([source_input_index, target_input_index, source_input_index + system_size, target_input_index + system_size]),
                         system_matrix_column_indices=np.array([target_output_index, source_output_index, target_output_index + system_size, source_output_index + system_size]),
-                        function_indices=[FUNCTION_INDICES['space'], FUNCTION_INDICES["space_lower"]])
+                        function_indices=[FUNCTIONS.index(space), FUNCTIONS.index(space_lower)])
 
         # Only now we can set the signal instructions for the strain signals acting on the respective spaces 
         # because we didn't know where these spaces would end up in the system matrix before.
@@ -905,7 +931,7 @@ def build(setup: Setup):
                             # two signal connector entries for each signal
                             system_matrix_row_indices=system_matrix_row_indices,
                             system_matrix_column_indices=system_matrix_column_indices,
-                            function_indices=[FUNCTION_INDICES["space_modulation"], FUNCTION_INDICES["space_modulation_lower"]] * space_signal_number,
+                            function_indices=[FUNCTIONS.index(space_modulation), FUNCTIONS.index(space_modulation_lower)] * space_signal_number,
                             carrier_indices=np.array([source_input_index, target_input_index, source_input_index, target_input_index] * space_signal_number),
                             carrier_row_indices=system_matrix_row_indices,
                             carrier_column_indices=system_matrix_column_indices)
@@ -931,9 +957,9 @@ def build(setup: Setup):
                          # placeholder
                          function_input_indices=np.array([[0]]),
                          output_column_indices=np.array([0]),
-                         system_matrix_row_indices=np.array([port_index]),
+                         system_matrix_row_indices=np.array([port_index]),  
                          system_matrix_column_indices=np.array([port_index]),
-                         function_indices=[FUNCTION_INDICES["vacuum_quantum_noise"]],
+                         function_indices=[FUNCTIONS.index(vacuum_quantum_noise)],
                          system_size_for_sidebands=system_size)
         
     # convert linked_names to indices
@@ -1083,7 +1109,7 @@ def pairs_to_arrays(
             # In case there are no carrier or signal matrix entries to change, these parameters get set to 
             # dummy values that replace the 1 at position [0, 0] of the respective matrix with 1 (do nothing).
             # function_input_indices, function_indices, output_indices, system_matrix_indices
-            return jnp.array([[0, 0, 0]]), jnp.array([6]), jnp.array([[0], [0]]), jnp.array([[0], [0]])
+            return jnp.array([[0, 0, 0]]), jnp.array([FUNCTIONS.index(dummy_function)]), jnp.array([[0], [0]]), jnp.array([[0], [0]])
         else:
             function_input_indices = np.vstack(arrays["function_input_indices"])
             output_indices = np.stack((np.concatenate(arrays["output_row_indices"]), np.concatenate(arrays["output_column_indices"])))
@@ -1168,30 +1194,6 @@ def prepare_arrays(
 
 
 ### SUPPORT DICTIONARIES ###
-
-
-# with respect to FUNCTION_LIST in components.py
-FUNCTION_INDICES = {
-    'laser': 1,
-    'surface': 2,
-    'space': 3,
-    'space_modulation': 4,
-    'signal': 5,
-    'dummy': 6,
-    'vacuum_quantum_noise': 7,
-    'loss_quantum_noise': 8,
-    'laser_amplitude_modulation': 10,
-    'laser_frequency_modulation': 11,
-    'f_to_z': 12,
-    'optical_to_mechanical_left': 13,
-    'mechanical_to_optical_left': 14,
-    'mechanical_to_optical_right': 15,
-    'space_lower': 9,
-    'optical_to_mechanical_right': 0,
-    'space_modulation_lower': 16,
-    'squeezer': 17,
-    'laser_frequency_modulation_lower': 18,
-}
 
 
 # the size of the component matrices

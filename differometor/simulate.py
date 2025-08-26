@@ -1,16 +1,16 @@
 import jax
+from time import time
+from tqdm import tqdm
 import jax.numpy as jnp
 from jax import lax, vmap, jit
-from time import time
 from differometor.setups import Setup
 from differometor.build import build, pairs_to_arrays, prepare_arrays, LINKING_FUNCTIONS
-from differometor.components import FUNCTION_LIST, UNIT_VACUUM, H_PLANCK, F0
+from differometor.components import FUNCTIONS, UNIT_VACUUM, H_PLANCK, F0
 
 
 jax.config.update("jax_enable_x64", True)
 
 
-# This function has to be jittable. It needs to have the same inputs as update to conform with lax.cond
 def solve(matrix, right_hand_side) -> jnp.ndarray:
     """
     system_matrix has dimension (range, system_size, system_size + 1) where range
@@ -28,25 +28,29 @@ def solve(matrix, right_hand_side) -> jnp.ndarray:
     return jnp.linalg.solve(matrix, right_hand_side)
 
 
-# This function has to be jittable
 def update(
         parameters, 
         matrix, 
         function_input_indices,
         output_indices,
         matrix_indices,
-        function_indices):
+        function_indices
+    ):
     # select the parameters that are used as inputs to the functions (e.g. loss, reflectivity, tuning for mirror)
     function_inputs = parameters[function_input_indices]
 
     # Function list as implicit global parameter: https://stackoverflow.com/questions/73621269/jax-jitting-functions-parameters-vs-global-variables#:~:text=During%20JIT%20tracing%2C%20JAX%20treats,the%20jaxpr%20representing%20the%20function.
-    output_matrix = vmap(lambda i, x: lax.switch(i, FUNCTION_LIST, x))(function_indices, function_inputs)
+    output_matrix = vmap(lambda i, x: lax.switch(i, FUNCTIONS, x))(function_indices, function_inputs)
     outputs = output_matrix[output_indices[0], output_indices[1]]
     matrix = matrix.at[matrix_indices[0], matrix_indices[1]].set(outputs)
     return matrix
 
 
-def expand_parameters(array, indices, values):
+def expand_parameters(
+        array, 
+        indices, 
+        values
+    ):
     # array has to have shape (1, N), indices has to have shape (V, )
     # values for each index have to be stacked row wise and must have dimension (V, R)
     # e.g. array = jnp.array([[1, 2, 3, 4, 5]]), indices = jnp.array([0, 1]), 
@@ -109,8 +113,6 @@ def simulate_in_parallel(
         noise: jnp.ndarray
             Shape (detector_number, signal_value_length). The solution of the noise system.
         """
-
-
         # insert the parameter values that actually get optimized
         # parameters shape: (1, P), optimized_parameter_indices shape: (OP), parameters_to_optimize shape: (OP)       
         parameters = parameters.at[[0], optimized_parameter_indices].set(optimized_parameters[optimized_value_indices])
@@ -120,7 +122,7 @@ def simulate_in_parallel(
         outputs_to_link = vmap(lambda i, x: lax.switch(i, LINKING_FUNCTIONS, x))(linking_function_indices, inputs_to_link)
         parameters = parameters.at[[0], indices_to_link].set(outputs_to_link)
 
-        # Do this before parameter expansion
+        # Must be done before parameter expansion
         qhd_phase_values = jnp.exp(1j * jnp.radians(parameters[0, qhd_parameter_indices]))
 
         # --- CARRIER SOLVING ---
@@ -137,7 +139,7 @@ def simulate_in_parallel(
                                 carrier_matrix_indices,
                                 carrier_function_indices)
         # carrier matrix gets expanded to shape (CV, CN, CN + 1)
-        
+
         # solve the carrier system, carrier_matrix_shape: (CV, CN, CN + 1), so we vmap over the first dimension in both
         carrier = vmap(solve)(carrier_matrix[:, :, :-1], carrier_matrix[:, :, -1])
         # carrier_solution shape: (CV, CN)
@@ -160,7 +162,7 @@ def simulate_in_parallel(
                              signal_output_indices, 
                              signal_matrix_indices, 
                              signal_function_indices)
-        # signal matrix gets expanded to shape (SV, SN, SN + 1)                  
+        # signal matrix gets expanded to shape (SV, SN, SN + 1) 
 
         # multiply the signal columns that contain the signal connector entries (not the right hand side)
         # with carrier solution (see https://arxiv.org/abs/1306.6752). Signals just scale the carrier solution
@@ -168,7 +170,7 @@ def simulate_in_parallel(
         # Notice the minus sign for the signal entries. This is to conform with Finesse 3
         signal_entries = - signal_matrix[:, signal_carrier_placing_indices[0], signal_carrier_placing_indices[1]] * carrier[:, signal_carrier_indices.flatten()]
         signal_matrix = signal_matrix.at[:, signal_carrier_placing_indices[0], signal_carrier_placing_indices[1]].set(signal_entries)
-        
+
         # apply conjugation
         carrier_size = carrier.shape[1]
         # first the component part of the lower sideband (e.g. mirrors, spaces)
@@ -211,8 +213,7 @@ def simulate_in_parallel(
         lower_carrier_selections = jnp.conjugate(upper_carrier_selections[:, :, carrier.shape[1]:carrier.shape[1]*2] * carrier)
         carrier_selections = upper_carrier_selections.at[:, :, carrier.shape[1]:carrier.shape[1]*2].set(lower_carrier_selections)
 
-        # propagate the weights backwards through the noise matrix by solving with transposed and 
-        # conjugated signal matrix 
+        # propagate the weights backwards through the noise matrix by solving with transposed and conjugated signal matrix 
         # only take the first n-1 columns of the signal matrix because the last column is the right hand side
         # only transpose last two dimensions because 
         transposed_conjugated_signal_matrix = jnp.transpose(jnp.conjugate(signal_matrix[:, :, :-1]), (0, 2, 1))
@@ -378,15 +379,74 @@ def run(
     noise: jnp.ndarray
         Shape (detector_number, signal_value_length). The solution of the noise system.
     detector_indices: jnp.ndarray
-        Port indices of the detectors in the order defined in the setup
+        Port indices of the detectors in the order defined in the setup.
     mirror_indices: jnp.ndarray
-        Port indices of the mirrors in the order defined in the setup
+        Port indices of the mirrors in the order defined in the setup.
     beamsplitter_indices: jnp.ndarray
-        Port indices of the beamsplitters in the order defined in the setup
+        Port indices of the beamsplitters in the order defined in the setup.
     isolator_indices: jnp.ndarray
-        Port indices of the isolators in the order defined in the setup
+        Port indices of the isolators in the order defined in the setup.
     """
     simulation_arrays, *metadata = run_build_step(setup, changing_pairs, changing_values, optimization_pairs)
     carrier, signal, noise = run_simulation_step(simulation_arrays) 
     
     return carrier, signal, noise, *metadata
+
+
+def run_setups(
+        setups, 
+        frequencies
+    ):
+    results = []
+    for setup in setups:
+        result = run(setup, [("f", "frequency")], frequencies)
+        results.append(result)
+    return results
+
+
+def run_with_parameter_sets(
+        setup, 
+        parameter_sets_to_run: jnp.ndarray, 
+        parameter_set_pairs: list, 
+        changing_pairs: list = None, 
+        changing_parameter_values = None,
+    ):
+    simulation_arrays, *metadata = run_build_step(setup, changing_pairs, changing_parameter_values, parameter_set_pairs)
+
+    def run_simulation(parameter_set_to_run):
+        carrier, signal, noise = simulate_in_parallel(parameter_set_to_run, *simulation_arrays[1:])
+        return carrier, signal, noise
+    
+    jitted_run_simulation = jit(run_simulation)
+
+    carriers = []
+    signals = []
+    noises = []
+    for ix in tqdm(range(parameter_sets_to_run.shape[0])):
+        carrier_solution, signal_solution, noise_solution = jitted_run_simulation(parameter_sets_to_run[ix])
+
+        carriers.append(jnp.expand_dims(carrier_solution, axis=-1))
+        signals.append(jnp.expand_dims(signal_solution, axis=-1))
+        noises.append(jnp.expand_dims(noise_solution, axis=-1))
+
+    return jnp.concatenate(carriers, axis=-1), jnp.concatenate(signals, axis=-1), jnp.concatenate(noises, axis=-1), *metadata
+
+
+def run_setups_with_parameter_sets(
+        setups, 
+        frequencies, 
+        parameter_sets_to_run, 
+        bounds,
+        parameter_set_pairs,
+        bounding_function
+    ):
+    parameter_sets_to_run = bounding_function(parameter_sets_to_run, bounds)
+    results = []
+    for setup in setups:
+        result = run_with_parameter_sets(setup, 
+                                          parameter_sets_to_run, 
+                                          parameter_set_pairs, 
+                                          [("f", "frequency")], 
+                                          frequencies)
+        results.append(result)
+    return results

@@ -1,9 +1,7 @@
 import numpy as np
 import jax.numpy as jnp
 from collections import defaultdict
-from differometor.components import DEFAULT_PROPERTIES, PARAMETER_BOUNDS
-from differometor.utils import sigmoid_bounding, set_value
-
+from differometor.components import DEFAULT_PROPERTIES
 
 class Nodes:
     def __init__(self, nodes):
@@ -54,27 +52,13 @@ class Setup:
         self.nodes = Nodes(self._nodes)
         self.edges = Edges(self._edges)        
 
-        self.default_properties = {
-            'frequency': {'frequency': 1},
-            'laser': {'power': 1., 'phase': 0.},
-            'squeezer': {'db': 0, 'angle': 90},
-            'mirror': {'loss': 5e-6, 'reflectivity': 0.5, 'tuning': 0.},
-            'beamsplitter': {'loss': 5e-6, 'reflectivity': 0.5, 'tuning': 0., 'alpha': 45.},
-            'free_mass': {'mass': 40.},
-            'signal': {'amplitude': 1., 'phase': 0.},
-            'space': {'length': 0, 'refractive_index': 1.},
-            'detector': {},
-            'qnoised': {},
-            'qhd': {'phase': 0},
-            'nothing': {},
-            'directional_beamsplitter': {},
-        }
+        self.default_properties = DEFAULT_PROPERTIES
 
     def add(
             self, 
             component: str, 
             name: str, 
-            optimizable=True, 
+            not_optimizable=None, 
             target=None, 
             port=None, 
             direction=None, 
@@ -84,6 +68,9 @@ class Setup:
             **properties):
         if '_' in name:
             raise ValueError(f"Node name '{name}' cannot contain underscores. Use '-' instead.")
+        
+        if not_optimizable is None:
+            not_optimizable = []
         
         if component in ['mirror', 'beamsplitter']:
             if 'reflectivity' in properties and 'transmissivity' in properties:
@@ -103,8 +90,9 @@ class Setup:
         
         if len(properties) != len(self.default_properties[component]):
             raise ValueError(f"Component '{component}' has the properties {list(self.default_properties[component].keys())} but received {list(properties.keys())}.")
-        if not component == 'signal' and not component == 'frequency' and optimizable:
-            self.parameters.extend([(name, property_name) for property_name in properties.keys()])
+        if not component == 'signal' and not component == 'frequency':
+            if not_optimizable is not True:
+                self.parameters.extend([(name, property_name) for property_name in properties.keys() if (name, property_name) not in not_optimizable])
 
         self._nodes[name] = {
             'component': component,
@@ -158,8 +146,15 @@ class Setup:
                 raise ValueError(f"Detector2 '{detector2}' is not in the setup.")
             self._nodes[name]['detector2'] = detector2
 
-
-    def space(self, source: str, target: str, optimizable=True, source_port="right", target_port="left", **properties):
+    def space(
+            self, 
+            source: str, 
+            target: str, 
+            not_optimizable=None, 
+            source_port="right", 
+            target_port="left", 
+            **properties
+        ):
         try:
             self._nodes[source]
         except KeyError:
@@ -169,13 +164,16 @@ class Setup:
         except KeyError:
             raise ValueError(f"Target node '{target}' is not in the setup.")
         
+        if not_optimizable is None:
+            not_optimizable = []
+
         if properties is None:
             properties = {}
         properties = {**self.default_properties['space'], **properties}
         if len(properties) != len(self.default_properties['space']):
             raise ValueError(f"Space has the properties {list(self.default_properties['space'].keys())} but received {list(properties.keys())}.")
-        if optimizable:
-            self.parameters.extend([(f"{source}_{target}", property_name) for property_name in properties.keys()])
+        if not_optimizable is not True:
+            self.parameters.extend([(f"{source}_{target}", property_name) for property_name in properties.keys() if (f"{source}_{target}", property_name) not in not_optimizable])
 
         self._edges[(source, target)] = {
             'properties': properties,
@@ -183,11 +181,61 @@ class Setup:
             'target_port': target_port
         }
 
+    def to_data(
+            self
+        ) -> dict:
+        """Return the setup as a plain Python dict with string keys for edges."""
+        edges_serializable = {
+            f"{src}_{tgt}": data for (src, tgt), data in self._edges.items()
+        }
+        return {
+            "parameters": list(self.parameters),
+            "nodes": dict(self._nodes),
+            "edges": edges_serializable
+        }
+
+    @classmethod
+    def from_data(
+            cls,    
+            data: dict
+        ):
+        """Rebuild a Setup instance from a dict with string edge keys."""
+        setup = cls()
+        setup.parameters = list(data["parameters"])
+        setup._nodes = dict(data["nodes"])
+        setup._edges = {
+            tuple(edge_str.split("_", 1)): edge_data
+            for edge_str, edge_data in data["edges"].items()
+        }
+
+        # Re-link wrappers
+        setup.nodes = Nodes(setup._nodes)
+        setup.edges = Edges(setup._edges)
+        return setup
+
 
 ### Voyager setup
 
 
-def voyager(mode = "space_modulation") -> tuple[Setup, list]:
+def voyager(
+        mode = "space_modulation"
+    ) -> tuple[Setup, list]:
+    """
+    Returns a predefined Voyager setup. 
+
+    Parameters
+    ----------
+    mode: str 
+        The modulation type. Available types: "space_modulation", "amplitude_modulation", "frequency_modulation"
+
+    Returns
+    -------
+    setup: Setup
+        The Voyager setup.
+    parameters: list
+        The parameters within the Voyager setup.
+    """
+
     S = Setup()
     S.add("laser", "l0", power=153, phase=0)
     S.add("mirror", "prm", transmissivity=0.049, loss=5e-06, tuning=0)
@@ -257,7 +305,24 @@ def voyager(mode = "space_modulation") -> tuple[Setup, list]:
 ### Simplified aLIGO setup with optomechanics and squeezing
 
 
-def aligo(mode="space_modulation") -> tuple[Setup, list]:
+def aligo(
+        mode="space_modulation"
+    ) -> tuple[Setup, list]:
+    """
+    Returns a predefined aLIGO setup. 
+
+    Parameters
+    ----------
+    mode: str 
+        The modulation type. Available types: "space_modulation", "amplitude_modulation", "frequency_modulation"
+
+    Returns
+    -------
+    setup: Setup
+        The aLIGO setup.
+    parameters: list
+        The parameters within the aLIGO setup.
+    """
     Larm = 3995
     itmT = 0.014
     mirrorL = 37.5e-6
@@ -314,12 +379,58 @@ def uifo(
         size: int, 
         centers: dict = None, 
         boundaries: dict = None,
-        random: bool = False
+        random: bool = False,
+        mode: str = 'space_modulation',
+        verbose: bool = False,
+        random_seed: int = None
     ) -> tuple[Setup, list]:
+    """
+    Defines a quasi-universal interferometer (UIFO).
+
+    Parameters
+    ----------
+    size: int 
+        The size of the grid. E.g. 3 results in a 3x3 grid.
+    centers: dict
+        A dictionary defining the centers of the unit cells. Keys are "xy" coordinates, values are 
+        tuples of (component_type, left_port_position). By default, all centers are beamsplitters oriented
+        towards the left. Component types are ["beamsplitter", "directional_beamsplitter"]. left_port_position
+        should be one of ["left", "top", "right", "bottom"]. Unspecified centers will be filled with the 
+        default or with a random component.
+    boundaries: dict
+        A dictionary defining the boundaries of the unit cells. Keys are "xy" coordinates, values are
+        "component_type" strings. By default, all boundaries are lasers. Component types are ["laser", 
+        "squeezer", "detector", "balanced_homodyne"]. Unspecified boundaries will be filled with the 
+        default or with a random component.
+    random: bool
+        Whether to use random configurations for the centers and boundaries. The random configuration
+        will have at least one detector.
+    mode: str
+        The modulation mode to use. Options are "space_modulation", "frequency_modulation", and
+        "amplitude_modulation".
+    verbose: bool
+        Whether to return chosen centers and boundaries.
+    random_seed: int | None
+        The random seed for reproducibility. If None, a random random seed will be used.
+
+    Returns
+    -------
+    setup: Setup
+        The setup object containing all components and their connections.
+    component_property_pairs: list
+        A list of optimizable parameters of the setup. frequency, signal and the local oscillator in
+        a balanced homodyne detection scheme are not optimizable by default.
+    centers (if verbose): dict
+        A dictionary defining the centers of the unit cells (see above).
+    boundaries (if verbose): dict
+        A dictionary defining the boundaries of the unit cells (see above).
+    """
+    rng = np.random.default_rng(random_seed)
+    
     if random:
         orientations = ["left", "top", "right", "bottom"]
         center_choices = ["beamsplitter", "directional_beamsplitter"]
-        default_center_function = lambda: (np.random.choice(center_choices), np.random.choice(orientations))
+        default_center_function = lambda: (rng.choice(center_choices), rng.choice(orientations))
     else:
         default_center_function = lambda: ('beamsplitter', 'left')
 
@@ -329,7 +440,7 @@ def uifo(
 
     if random:
         boundary_choices = ["laser", "squeezer"]
-        default_boundary_function = lambda: np.random.choice(boundary_choices)
+        default_boundary_function = lambda: rng.choice(boundary_choices)
     else:
         default_boundary_function = lambda: 'laser'
 
@@ -339,12 +450,13 @@ def uifo(
 
     # Add "detector" to default_boundaries at a random position if not already present
     if random:
-        if "detector" not in default_boundaries.values():
-            edge, node = np.random.choice([0, size+1]), np.random.choice(range(1, size+1))
-            if np.random.choice([True, False]):
-                default_boundaries[(edge, node)] = "detector"
+        if "detector" not in default_boundaries.values() and "balanced_homodyne" not in default_boundaries.values():
+            side, position = rng.choice([0, size+1]), rng.choice(range(1, size+1))
+            detector_type = rng.choice(["detector", "balanced_homodyne"])
+            if rng.choice([True, False]):
+                default_boundaries[f"{side}{position}"] = detector_type
             else:
-                default_boundaries[(node, edge)] = "detector"
+                default_boundaries[f"{position}{side}"] = detector_type
 
     def unit_cell(S: Setup, x: int, y: int, center: str = "beamsplitter", left_port_position: str = "left"):
         if center == "beamsplitter":
@@ -375,11 +487,12 @@ def uifo(
             # centers always take the left side of unit cell mirrors
             S.space(f"center{x}{y}", f"{mirrors[i]}{x}{y}", length=1, source_port=port)    
 
-        # phase 180 for signals on vertical spaces
-        S.add("signal", f"scenter{x}{y}ml{x}{y}", target=f"center{x}{y}_ml{x}{y}", phase = 180 if left_port_position in ["top", "bottom"] else 0)
-        S.add("signal", f"scenter{x}{y}mr{x}{y}", target=f"center{x}{y}_mr{x}{y}", phase = 180 if left_port_position in ["top", "bottom"] else 0)
-        S.add("signal", f"scenter{x}{y}mt{x}{y}", target=f"center{x}{y}_mt{x}{y}", phase = 180 if left_port_position in ["left", "right"] else 0)
-        S.add("signal", f"scenter{x}{y}mb{x}{y}", target=f"center{x}{y}_mb{x}{y}", phase = 180 if left_port_position in ["left", "right"] else 0)
+        if mode == "space_modulation":
+            # phase 180 for signals on vertical spaces
+            S.add("signal", f"scenter{x}{y}ml{x}{y}", target=f"center{x}{y}_ml{x}{y}", phase = 180 if left_port_position in ["top", "bottom"] else 0)
+            S.add("signal", f"scenter{x}{y}mr{x}{y}", target=f"center{x}{y}_mr{x}{y}", phase = 180 if left_port_position in ["top", "bottom"] else 0)
+            S.add("signal", f"scenter{x}{y}mt{x}{y}", target=f"center{x}{y}_mt{x}{y}", phase = 180 if left_port_position in ["left", "right"] else 0)
+            S.add("signal", f"scenter{x}{y}mb{x}{y}", target=f"center{x}{y}_mb{x}{y}", phase = 180 if left_port_position in ["left", "right"] else 0)
 
     def boundary_cell(S: Setup, x: int, y: int, boundary: str = "laser", mass: bool = True, position: str = "left"):
         S.add("mirror", f"m{x}{y}")
@@ -391,16 +504,39 @@ def uifo(
         if boundary == "detector":
             S.add("detector", f"boundary{x}{y}detector", target=f"m{x}{y}", port="left", direction="out")
             S.add("qnoised", f"boundary{x}{y}noise", target=f"m{x}{y}", port="left", direction="out")
+        elif boundary == "balanced_homodyne":
+            S.add("laser", f"boundary{x}{y}lo", power=0.01, phase=0, not_optimizable=True)
+            S.add("beamsplitter", f"boundary{x}{y}bhbs")
+            S.add("qnoised", f"boundary{x}{y}noise-top", target=f"boundary{x}{y}bhbs", port="top", direction="out", auxiliary=True)
+            S.add("qnoised", f"boundary{x}{y}noise-right", target=f"boundary{x}{y}bhbs", port="right", direction="out", auxiliary=True)
+            S.add("qhd", f"boundary{x}{y}noise", detector1=f"boundary{x}{y}noise-top", detector2=f"boundary{x}{y}noise-right")
+            S.add("detector", "detector-top", target=f"boundary{x}{y}bhbs", port="top", direction="out")
+            S.add("detector", "detector-right", target=f"boundary{x}{y}bhbs", port="right", direction="out")
+
+            S.space(f"boundary{x}{y}lo", f"boundary{x}{y}bhbs", target_port="bottom")
+            S.space(f"m{x}{y}", f"boundary{x}{y}bhbs", source_port="left", target_port="left")
+            if mode == "space_modulation":
+                S.add("signal", f"sm{x}{y}boundary{x}{y}bhbs", target=f"m{x}{y}_boundary{x}{y}bhbs", phase=180 if position in ["top", "bottom"] else 0)
+                S.add("signal", f"sboundary{x}{y}loboundary{x}{y}bhbs", target=f"boundary{x}{y}lo_boundary{x}{y}bhbs", phase=180 if position in ["left", "right"] else 0)
+            if mode == "amplitude_modulation":
+                S.add("signal", f"sboundary{x}{y}lo", target=f"boundary{x}{y}lo_amplitude", amplitude=(f"boundary{x}{y}lo_power", jnp.sqrt))
+            if mode == "frequency_modulation":
+                S.add("signal", f"sboundary{x}{y}lo", target=f"boundary{x}{y}lo_frequency")
         elif boundary in ["laser", "squeezer"]:
             S.add(boundary, f"boundary{x}{y}")
             S.space(f"boundary{x}{y}", f"m{x}{y}")
-            # phase 180 for signals on vertical spaces
-            S.add("signal", f"sboundary{x}{y}m{x}{y}", target=f"boundary{x}{y}_m{x}{y}", phase=180 if position in ["top", "bottom"] else 0)
+            if mode == "space_modulation":
+                # phase 180 for signals on vertical spaces
+                S.add("signal", f"sboundary{x}{y}m{x}{y}", target=f"boundary{x}{y}_m{x}{y}", phase=180 if position in ["top", "bottom"] else 0)
+            if boundary == "laser" and mode == "amplitude_modulation":
+                S.add("signal", f"sboundary{x}{y}", target=f"boundary{x}{y}_amplitude", amplitude=(f"boundary{x}{y}_power", jnp.sqrt))
+            if boundary == "laser" and mode == "frequency_modulation":
+                S.add("signal", f"sboundary{x}{y}", target=f"boundary{x}{y}_frequency")
 
     def cell_grid(S: Setup, n: int):
         for x in range(1, n+1):
             for y in range(1, n+1):
-                center, left_port_position = centers[(x, y)]
+                center, left_port_position = centers[f"{x}{y}"]
                 unit_cell(S, x, y, center=center, left_port_position=left_port_position)
 
         # connect individual unit cells inside the grid (not towards the boundaries)
@@ -409,13 +545,15 @@ def uifo(
                 if x > 1:
                     # right ports because left ports are taken by center
                     S.space(f"mt{x}{y}", f"mb{x-1}{y}", source_port="right", target_port="right")
-                    # signals on vertical spaces
-                    S.add("signal", f"smt{x}{y}mb{x-1}{y}", target=f"mt{x}{y}_mb{x-1}{y}", phase=180)
+                    if mode == "space_modulation":
+                        # signals on vertical spaces
+                        S.add("signal", f"smt{x}{y}mb{x-1}{y}", target=f"mt{x}{y}_mb{x-1}{y}", phase=180)
                 if y > 1:
                     # right ports because left ports are taken by center
                     S.space(f"mr{x}{y-1}", f"ml{x}{y}", source_port="right", target_port="right")
-                    # signals on horizontal spaces
-                    S.add("signal", f"smr{x}{y-1}ml{x}{y}", target=f"mr{x}{y-1}_ml{x}{y}")
+                    if mode == "space_modulation":
+                        # signals on horizontal spaces
+                        S.add("signal", f"smr{x}{y-1}ml{x}{y}", target=f"mr{x}{y-1}_ml{x}{y}")
 
     S = Setup()
     S.add("frequency", "f")
@@ -423,45 +561,64 @@ def uifo(
 
     for x in range(1, size+1):
         # left boundary
-        boundary_cell(S, x, 0, boundary=boundaries[(x, 0)], position="left")
+        boundary_cell(S, x, 0, boundary=boundaries[f"{x}0"], position="left")
         # target port right because left is taken by center
         S.space(f"m{x}0", f"ml{x}1", target_port="right")
-        S.add("signal", f"sm{x}0ml{x}1", target=f"m{x}0_ml{x}1")
+        if mode == "space_modulation":
+            S.add("signal", f"sm{x}0ml{x}1", target=f"m{x}0_ml{x}1")
         # right boundary
-        boundary_cell(S, x, size+1, boundary=boundaries[(x, size+1)], position="right")
+        boundary_cell(S, x, size+1, boundary=boundaries[f"{x}{size+1}"], position="right")
         # mirrors on the right side of the grid have their right ports still open, 
         # boundary mirrors also only have their right ports open as sources always use left port
         S.space(f"mr{x}{size}", f"m{x}{size+1}", target_port="right")
-        S.add("signal", f"smr{x}{size}m{x}{size+1}", target=f"mr{x}{size}_m{x}{size+1}")
+        if mode == "space_modulation":
+            S.add("signal", f"smr{x}{size}m{x}{size+1}", target=f"mr{x}{size}_m{x}{size+1}")
     for y in range(1, size+1):
         # top boundary
-        boundary_cell(S, 0, y, boundary=boundaries[(0, y)], position="top")
+        boundary_cell(S, 0, y, boundary=boundaries[f"0{y}"], position="top")
         # mirrors along the top of the grid have their left ports towards the center, so only the right ports are open
         S.space(f"m0{y}", f"mt1{y}", target_port="right")
-        S.add("signal", f"sm0{y}mt1{y}", target=f"m0{y}_mt1{y}", phase=180)
+        if mode == "space_modulation":
+            S.add("signal", f"sm0{y}mt1{y}", target=f"m0{y}_mt1{y}", phase=180)
         # bottom boundary
-        boundary_cell(S, size+1, y, boundary=boundaries[(size+1, y)], position="bottom")
+        boundary_cell(S, size+1, y, boundary=boundaries[f"{size+1}{y}"], position="bottom")
         # mirrors along the bottom of the grid have their left ports towards the center, so only the right ports are open
         # boundary mirrors also only have their right ports open as sources always use left port
         S.space(f"mb{size}{y}", f"m{size+1}{y}", target_port="right")
-        S.add("signal", f"smb{size}{y}m{size+1}{y}", target=f"mb{size}{y}_m{size+1}{y}", phase=180)
+        if mode == "space_modulation":
+            S.add("signal", f"smb{size}{y}m{size+1}{y}", target=f"mb{size}{y}_m{size+1}{y}", phase=180)
 
-    return S, S.parameters
-
-
-def initialize_parameters_randomly(setup: Setup, component_parameter_pairs: list, uniform_bound: int = 10):
-    bounds = np.array([[PARAMETER_BOUNDS[property_name][0] for (_, property_name) in component_parameter_pairs], 
-                       [PARAMETER_BOUNDS[property_name][1] for (_, property_name) in component_parameter_pairs]])
-    parameters = np.array(np.random.uniform(-uniform_bound, uniform_bound, len(component_parameter_pairs)))
-    parameters = sigmoid_bounding(parameters, bounds)
-
-    for (node, property_name), value in zip(component_parameter_pairs, parameters):
-        set_value(node, property_name, float(value), setup)
+    if verbose:
+        for key in default_centers:
+            default_centers[key] = (str(default_centers[key][0]), str(default_centers[key][1]))
+        for key in default_boundaries:
+            default_boundaries[key] = str(default_boundaries[key])
+        return S, S.parameters, default_centers, default_boundaries
+    else:
+        return S, S.parameters
 
 
-def constrain_inter_grid_cell_spaces(component_property_pairs, optimized_properties):
+def constrain_inter_grid_cell_spaces(
+        component_property_pairs, 
+        optimized_properties
+    ):
     """
-    Spaces within a grid cell and in boundary cells are not optimized.
+    Used for UIFOs. Filters parameters that are actually getting optimized. Correlates parallel 
+    spaces in different grid cells of an UIFO, so that grid structure is preserved. 
+
+    Parameters
+    ----------
+    component_property_pairs : list
+        A list of component-property pairs to constrain. E.g. [("laser1", "power"), 
+        ("laser1", "phase"), ("mirror1", "reflectivity"), ...]
+    optimized_properties : list
+        A list of properties to optimize. E.g. ["power"]
+
+    Returns
+    -------
+    constrained_pairs : list
+        A list of constrained component-property pairs. E.g. [("laser1", "power"), 
+        [("mirror1_mirror2", "length"), ("mirror3_mirror4", "length")]]
     """
     component_property_pairs = [[component_name, property_name] for component_name, property_name in component_property_pairs if property_name in optimized_properties]
 
@@ -491,7 +648,9 @@ def constrain_inter_grid_cell_spaces(component_property_pairs, optimized_propert
 ### Finesse Conversions
 
 
-def differometor_to_finesse(setup: Setup) -> str:
+def differometor_to_finesse(
+        setup: Setup
+    ) -> str:
     finesse = ""
 
     port_translation = {
